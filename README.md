@@ -3,7 +3,6 @@
 
 Этот скрипт позволяет массово управлять настройками доменов в Cloudflare с использованием API, включая параметры IPv6, Always Use HTTPS, TLS 1.3, режима "Under Attack" и очистки кэша.
 
-
 ## Скриншот интерфейса
 
 ![Скриншот интерфейса](Cloudflare-API.jpg)
@@ -72,6 +71,10 @@ python Cloudflare-API.py
 | example2.com   | another_api_token_here| another_zone_id_here | another_email@example.com |
 
 Сохраните файл как `cloudflare_accounts.xlsx` и поместите его в ту же директорию, что и скрипт.
+
+## Результат выполнения скрипта
+
+![Скриншот интерфейса](Cloudflare-API-result.jpg)
 
 ## Поддержка
 
