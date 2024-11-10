@@ -39,7 +39,8 @@ async def change_setting(session, domain, setting, enable, credentials, semaphor
             "ipv6": f"https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/ipv6",
             "always_use_https": f"https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/always_use_https",
             "tls_1_3": f"https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/tls_1_3",
-            "under_attack": f"https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/security_level"
+            "under_attack": f"https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/security_level",
+            "ech": f"https://api.cloudflare.com/client/v4/zones/{zone_id}/settings/ech"  # новый URL для ECH
         }
         url = setting_urls.get(setting)
         if not url:
@@ -89,14 +90,13 @@ async def purge_cache(session, domain, credentials, semaphore):
                 return False
 
 # Асинхронная функция для применения всех настроек и очистки кеша для каждого домена
-async def apply_all_changes(domains, ipv6_status, https_status, tls_status, attack_mode, purge_cache_var,
+async def apply_all_changes(domains, ipv6_status, https_status, tls_status, attack_mode, ech_status, purge_cache_var,
                             progress_label):
     data = load_data('cloudflare_accounts.xlsx')
     if not data:
         messagebox.showerror("Ошибка", "Не удалось загрузить данные из файла.")
         return
 
-    # Словарь для хранения сессий по каждому аккаунту (API Token)
     sessions = {}
     semaphore = asyncio.Semaphore(MAX_CONCURRENT_TASKS)
     all_results = []
@@ -107,13 +107,11 @@ async def apply_all_changes(domains, ipv6_status, https_status, tls_status, atta
                 credentials = data[domain]
                 api_token = credentials.get('API_Token')
 
-                # Используем разные сессии для разных API токенов
                 if api_token not in sessions:
                     sessions[api_token] = aiohttp.ClientSession()
 
                 session = sessions[api_token]
 
-                # Запуск задач для домена
                 tasks = []
 
                 if ipv6_status['apply'].get():
@@ -124,25 +122,22 @@ async def apply_all_changes(domains, ipv6_status, https_status, tls_status, atta
                     tasks.append(change_setting(session, domain, "tls_1_3", tls_status['state'].get() == "on", credentials, semaphore))
                 if attack_mode['apply'].get():
                     tasks.append(change_setting(session, domain, "under_attack", attack_mode['state'].get() == "on", credentials, semaphore))
+                if ech_status['apply'].get():
+                    tasks.append(change_setting(session, domain, "ech", ech_status['state'].get() == "on", credentials, semaphore))
 
-                # Выполнение всех задач параллельно для одного домена
                 results = await asyncio.gather(*tasks)
 
-                # Очистка кэша после настроек
                 if purge_cache_var['apply'].get():
                     cache_result = await purge_cache(session, domain, credentials, semaphore)
                     results.append(cache_result)
 
-                # Обновление прогресса
                 success = all(results)
                 all_results.append(f"{domain}: {'успешно' if success else 'не удалось'}")
                 progress_label.config(text="\n".join(all_results))
                 progress_label.update()
     finally:
-        # Закрываем все сессии после завершения всех задач
         await asyncio.gather(*(session.close() for session in sessions.values()))
 
-    # Финальный отчет
     progress_label.config(text="Все операции выполнены.")
     progress_label.update()
     messagebox.showinfo("Результаты выполнения", "\n".join(all_results))
@@ -173,9 +168,9 @@ def create_interface():
     https_status = {'state': tk.StringVar(value="off"), 'apply': tk.BooleanVar()}
     tls_status = {'state': tk.StringVar(value="off"), 'apply': tk.BooleanVar()}
     attack_mode = {'state': tk.StringVar(value="off"), 'apply': tk.BooleanVar()}
+    ech_status = {'state': tk.StringVar(value="off"), 'apply': tk.BooleanVar()}
     purge_cache_var = {'state': tk.StringVar(value="off"), 'apply': tk.BooleanVar()}
 
-    # Функция для создания тумблеров и чекбоксов
     def create_toggle(frame, label_text, setting_var, apply_var):
         toggle_button = tk.Button(
             frame, text=f"{label_text} Выкл", bg="red", fg="white", width=20,
@@ -186,13 +181,13 @@ def create_interface():
         apply_checkbox = tk.Checkbutton(frame, text="Применить", variable=apply_var)
         apply_checkbox.pack(side="right")
 
-    # Чекбокс "Выбрать все"
     def toggle_all_checkboxes():
         state = select_all_var.get()
         ipv6_status['apply'].set(state)
         https_status['apply'].set(state)
         tls_status['apply'].set(state)
         attack_mode['apply'].set(state)
+        ech_status['apply'].set(state)
         purge_cache_var['apply'].set(state)
 
     select_all_var = tk.BooleanVar()
@@ -200,30 +195,27 @@ def create_interface():
                                          command=toggle_all_checkboxes)
     select_all_checkbox.pack(pady=5)
 
-    # Создание фреймов и тумблеров с чекбоксами для каждой опции
     for label, status_var in [("IPv6", ipv6_status),
                               ("Always Use HTTPS", https_status),
                               ("TLS 1.3", tls_status),
-                              ("Under Attack Mode", attack_mode)]:
+                              ("Under Attack Mode", attack_mode),
+                              ("ECH", ech_status)]:
         frame = tk.Frame(window)
         frame.pack(pady=5)
         create_toggle(frame, label, status_var['state'], status_var['apply'])
 
-    # Чекбокс для очистки кеша
     purge_cache_checkbox = tk.Checkbutton(window, text="Очистить кеш", variable=purge_cache_var['apply'])
     purge_cache_checkbox.pack(pady=5)
 
-    # Метка для отображения прогресса
     progress_label = tk.Label(window, text="Прогресс выполнения: 0%")
     progress_label.pack(pady=10)
 
-    # Кнопка для применения всех выбранных изменений
     def on_apply_all():
         domains = get_domains()
         if not domains:
             messagebox.showwarning("Ошибка", "Введите хотя бы один домен.")
             return
-        asyncio.run(apply_all_changes(domains, ipv6_status, https_status, tls_status, attack_mode, purge_cache_var,
+        asyncio.run(apply_all_changes(domains, ipv6_status, https_status, tls_status, attack_mode, ech_status, purge_cache_var,
                                       progress_label))
 
     apply_button = tk.Button(window, text="Применить выбранное", command=on_apply_all, width=20)
